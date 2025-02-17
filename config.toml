@@ -1,0 +1,4 @@
+pmdir = "./package-managers/"
+world_path = "./world"
+
+env."CARGO_HOME" = "./cargo-home"

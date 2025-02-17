@@ -1,0 +1,4 @@
+[impl]
+add    = "cargo install {}"
+remove = "cargo uninstall {}"
+query  = "cargo info {}"
