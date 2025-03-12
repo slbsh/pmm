@@ -1,4 +1,4 @@
 [impl]
-add    = "cargo install {}"
-remove = "cargo uninstall {}"
-query  = "cargo info {}"
+add    = "cargo install ${items}"
+remove = "cargo uninstall ${items}"
+query  = "cargo info ${items}"

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 #[derive(Default, Debug)]
 pub struct Args {
 	args:  HashMap<&'static str, Option<&'static str>>,
-	verbs: Vec<&'static str>,
+	pub verbs: Vec<&'static str>,
 }
 
 impl Args {

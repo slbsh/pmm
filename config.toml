@@ -1,4 +1,5 @@
 pmdir = "./package-managers/"
-world_path = "./world"
+world-path = "./world"
+shell = "/bin/sh"
 
 env."CARGO_HOME" = "./cargo-home"

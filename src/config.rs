@@ -3,18 +3,21 @@ use std::collections::HashMap;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all="kebab-case")]
 pub struct Config {
 	pub pmdir:      Box<Path>,
 	pub world_path: Box<Path>,
+	pub shell:      String,
 	#[serde(default)]
-	pub env:        HashMap<String, Box<str>>,
+	pub env:        HashMap<String, String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all="kebab-case")]
 pub struct PmConfig {
 	#[serde(default)]
-	pub env:   HashMap<String, Box<str>>,
+	pub env:   HashMap<String, String>,
 	#[serde(default)]
 	pub args:  Box<str>,
 	#[serde(rename="impl")]
@@ -22,15 +25,17 @@ pub struct PmConfig {
 }
 
 #[derive(Hash, PartialEq, Eq, Debug, serde::Deserialize)]
-#[serde(rename_all="lowercase")]
+#[serde(rename_all="kebab-case")]
 pub enum PmImpl {
-	Add,
-	Remove,
+	Query,  // list all packages with name
+	Add,    // add packages, polls query before to check precedence
+	Remove, // remove packages, polls query to check with to remove
 }
 
 impl PmImpl {
 	pub fn from_str(s: &str) -> Option<Self> {
 		match s {
+			"query"  => Some(Self::Query),
 			"add"    => Some(Self::Add),
 			"remove" => Some(Self::Remove),
 			_        => None,
