@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+pmm-abi = { path = "pmm-abi", features = ["serde"] }
 colored = "3.0" # disable colored out when in a pipe
 serde = { default-features = false, version = "1.0", features = ["derive"] }
 toml = { version = "0.8", default-features = false, features = ["parse"] }
+
+stabby = { version = "36.2", features = ["libloading"], git = "https://github.com/slbsh/stabby" }
+libloading = "0.8"

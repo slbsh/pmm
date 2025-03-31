@@ -1,3 +1,6 @@
+name = "cargo"
+env."CARGO_TERM_COLOR" = "always"
+
 [impl]
 add    = "cargo install ${items}"
 remove = "cargo uninstall ${items}"

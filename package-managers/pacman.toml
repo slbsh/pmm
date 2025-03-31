@@ -1,0 +1,8 @@
+name = "pacman"
+env."args" = "--color=always"
+
+[impl]
+add    = "pacman ${args} -S ${items}"
+remove = "pacman ${args} -Rns ${items}"
+query  = "pacman ${args} -Ssq ${items}"
+list   = "pacman ${args} -Ss ${items}"

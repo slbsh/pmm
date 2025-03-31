@@ -1,89 +1,73 @@
-use std::ops::Not;
-use std::process::{Command, Stdio};
-use std::io::Write;
-use std::sync::Arc;
+//#![feature(trivial_bounds)]
+
+use std::{ops::Not, sync::LazyLock};
+
+use stabby::libloading::StabbyLibrary;
+use stabby::boxed::Box;
+use pmm_abi::PmImplDyn;
 
 mod config;
 mod error;
 mod args;
 
-use config::{PmConfig, PmImpl, Config};
+use config::PmConfig;
 
 const DEFAULT_CONF_PATH: &str = "./config.toml";
+
+static CONFIG: LazyLock<pmm_abi::Config> = LazyLock::new(|| {
+	let file = std::env::var("PMM_CONFIG")
+		.unwrap_or_else(|_| String::from(DEFAULT_CONF_PATH));
+
+	config::deserialize_from(&file).unwrap_or_else(|e| err!("'{file}': {e}"))
+});
 
 fn main() {
 	let args = args::Args::parse(std::env::args().skip(1));
 
-
-	let config = {
-		let file = std::env::var("PMM_CONFIG")
-			.unwrap_or_else(|_| String::from(DEFAULT_CONF_PATH));
-
-		config::deserialize_from::<Config>(&file)
-			.unwrap_or_else(|e| err!("'{file}': {e}"))
-	};
-
 	#[cfg(debug_assertions)]
-	println!("{:#?}", config);
+	println!("{:#?}", LazyLock::force(&CONFIG));
 
-
-	let package_managers = std::fs::read_dir(&config.pmdir)
-		.unwrap_or_else(|e| err!("'{}': {e}", config.pmdir.display()))
+	let package_managers = std::fs::read_dir(&*CONFIG.pmdir)
+		.unwrap_or_else(|e| err!("'{}': {e}", CONFIG.pmdir))
 		.filter_map(|entry| {
 			let path = entry.unwrap_or_else(|e| err!("{e}")).path();
 			path.is_dir().not().then_some(path)
 		})
-		.map(|path| (
-			path.file_stem().unwrap().to_string_lossy().into_owned(),
-			config::deserialize_from::<PmConfig>(&path)
-				.unwrap_or_else(|e| err!("'{}': {e}", path.display()))))
+		.map(|path| match path.extension()
+			.unwrap_or_else(|| err!("no extension for '{}'", path.display()))
+			.to_str().unwrap() {
+			"so"   => unsafe {
+				let lib = libloading::Library::new(&path).unwrap_or_else(|e| err!("{e}"));
+
+				type InitFn = extern "C" fn(&'static pmm_abi::Config) 
+					-> stabby::dynptr!(Box<dyn pmm_abi::PmImpl>);
+
+				let pmimpl = lib.get_canaried::<InitFn>(b"init")
+					.unwrap_or_else(|e| crate::err!("{e}"))(&CONFIG);
+
+				std::mem::forget(lib); // leak the lib so we never unload it
+
+				pmimpl
+			},
+			"toml" => Box::new(config::deserialize_from::<PmConfig>(&path)
+				.unwrap_or_else(|e| err!("'{}': {e}", path.display()))).into(),
+			_ => err!("unknown filetype for '{}'", path.display()),
+		})
 		.collect::<Vec<_>>();
-	
+
+
 	#[cfg(debug_assertions)]
-	println!("{:#?}", package_managers);
+	println!("{:#?}", package_managers.len());
 
-}
+	let items = args.verbs.get(1..)
+		.map_or(Vec::new(), |v| v.iter().map(|&s| s.into()).collect::<Vec<stabby::str::Str>>());
 
-fn batch_cmd<'pm>(pms: &'pm [(String, PmConfig)], items: &[&str], conf: &Config, cmd: PmImpl) -> Vec<(&'pm str, Result<String, String>)> {
-	let (tx, rx) = std::sync::mpsc::channel();
-	let tx = Arc::new(tx);
-
-	pms.iter().for_each(|(name, pmconf)| {
-		let _ = std::thread::spawn(move || {
-			let mut child = Command::new(&conf.shell)
-				.envs(&pmconf.env)
-				.envs(&conf.env)
-				.env("items", items.join(" "))
-				.stdin(Stdio::piped())
-				.stdout(Stdio::piped())
-				.stderr(Stdio::piped())
-				.spawn()
-				.map_err(|e| warn!("failed to run action '{cmd:?}' for '{name}': {e}"))?;
-
-			let cmd = pmconf.impls.get(&cmd)
-				.ok_or_else(|| warn!("action '{cmd:?}' not implemented for '{name}'"))?;
-
-			child.stdin.as_mut().unwrap().write_all(cmd.as_bytes()).unwrap();
-			let out = child.wait_with_output().unwrap();
-
-			let stdout = String::from_utf8(out.stdout)
-				.map_err(|_| warn!("invalid utf8 in stdout for '{name}'"))?;
-
-			let stderr = String::from_utf8(out.stderr)
-				.map_err(|_| warn!("invalid utf8 in stderr for '{name}'"))?;
-
-			tx.send(
-				(name.as_str(), out.status.success()
-					.then_some(stdout)
-					.ok_or(stderr)))
-				.unwrap();
-			Ok::<(), ()>(())
-		});
-	});
-
-	let mut out = Vec::with_capacity(pms.len());
-	while out.len() != pms.len() {
-		out.push(rx.recv().unwrap());
+	match *args.verbs.first().unwrap_or_else(|| err!("no verb specified")) {
+		"query" => package_managers.iter().for_each(|pm|
+			println!("{}: {:#?}", pm.name(), pm.query(items.as_slice().into()))),
+		v => err!("unknown verb '{v}'"),
 	}
-	out
+
+	// batch_cmd(&package_managers, &args.verbs, &config, Action::Query)
+	// 	.iter().for_each(|r| println!("{}: {}({})", r.0, if r.1.is_ok() { "Ok" } else { "Err" }, r.1.as_ref().unwrap_or_else(|s|s)));
 }
