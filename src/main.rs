@@ -63,8 +63,20 @@ fn main() {
 		.map_or(Vec::new(), |v| v.iter().map(|&s| s.into()).collect::<Vec<stabby::str::Str>>());
 
 	match *args.verbs.first().unwrap_or_else(|| err!("no verb specified")) {
-		"query" => package_managers.iter().for_each(|pm|
-			println!("{}: {:#?}", pm.name(), pm.query(items.as_slice().into()))),
+		"query" => package_managers.iter()
+			.for_each(|pm| pm.query(items.as_slice().into())
+				.match_owned(
+					|p| p.match_owned(
+						|p| {
+							let name = pm.name();
+							p.iter().for_each(|pkg| println!("{name}: {}", pkg.name));
+						},
+						|e| {
+							let name = pm.name();
+							warn!("{name}: {e}");
+						}),
+					|| (),
+				)),
 		v => err!("unknown verb '{v}'"),
 	}
 

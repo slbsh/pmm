@@ -11,6 +11,8 @@ use crate::CONFIG;
 pub struct PmConfig {
 	pub name:  String,
 	#[serde(default)]
+	pub strat: Option<String>,
+	#[serde(default)]
 	pub env:   HashMap<String, String>,
 	#[serde(rename="impl")]
 	pub impls: HashMap<Action, Box<str>>,
@@ -42,12 +44,19 @@ impl pmm_abi::PmImpl for PmConfig {
 
 	extern "C" fn query(&self, items: sSlice<sStr>) -> sOption<sResult<sVec<pmm_abi::Package>, sString>> {
 		self.run(items, Action::Query).map(|s| s.map(|s| 
-			s.split('\n').map(|s| pmm_abi::Package { name: s.into() }).collect())).into()
+			s.split('\n')
+				.filter(|s| !s.is_empty())
+				.map(|s| pmm_abi::Package { name: s.into() }).collect())).into()
 	}
 }
 
 impl PmConfig {
 	fn run(&self, items: sSlice<sStr>, action: Action) -> Option<sResult<sString, sString>> {
+		let Some(cmd) = self.impls.get(&action) else {
+			crate::warn!("action '{action:?}' not implemented for '{}'", self.name);
+			return None;
+		};
+
 		let mut child = Command::new(CONFIG.shell.as_ref()
 			.unwrap_or_else(|| crate::err!("a shell must be specified to run non `.so` package manegers"))
 			.as_ref())
@@ -60,12 +69,13 @@ impl PmConfig {
 			.spawn()
 			.map_err(|e| crate::warn!("failed to run action '{action:?}' for '{}': {e}", self.name)).ok()?;
 
-		let Some(cmd) = self.impls.get(&action) else {
-			crate::warn!("action '{action:?}' not implemented for '{}'", self.name);
-			return None;
+		let cmd = match self.strat {
+			Some(ref strat) => format!("strat -r {strat} {cmd}"),
+			None => cmd.to_string(),
 		};
 
-		child.stdin.as_mut().unwrap().write_all(cmd.as_bytes()).unwrap();
+		child.stdin.as_mut().unwrap()
+			.write_all(cmd.as_bytes()).unwrap();
 
 		let out = child.wait_with_output().unwrap();
 

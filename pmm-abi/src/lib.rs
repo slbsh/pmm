@@ -34,8 +34,15 @@ pub struct Package {
 	pub name: String,
 }
 
+impl std::fmt::Display for Package {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "{}", self.name)
+	}
+}
+
 #[stabby::stabby]
 pub trait PmImpl {
 	extern "C" fn name(&self) -> String;
-	extern "C" fn query(&self, items: Slice<Str>) -> Option<Result<Vec<Package>, String>>;
+	extern "C" fn query(&self, items: Slice<Str>) -> Option<Result<Package, String>>;
+	extern "C" fn list(&self, items: Slice<Str>) -> Option<Result<Vec<Package>, String>>;
 }
