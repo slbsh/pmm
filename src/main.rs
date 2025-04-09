@@ -62,21 +62,29 @@ fn main() {
 	let items = args.verbs.get(1..)
 		.map_or(Vec::new(), |v| v.iter().map(|&s| s.into()).collect::<Vec<stabby::str::Str>>());
 
+	// TODO: dont hard code the verbs, have em in a config instead
 	match *args.verbs.first().unwrap_or_else(|| err!("no verb specified")) {
+		"query" if items.len() != 1 => err!("expected 1 item to query, got {}", items.len()),
 		"query" => package_managers.iter()
-			.for_each(|pm| pm.query(items.as_slice().into())
+			.for_each(|pm| pm.query(items[0])
+				.match_owned(
+					|p| p.match_owned(
+						|p| println!("{}: {p}", pm.name()),
+						|e| warn!("{}: {e}", pm.name())),
+					|| (),
+				)),
+		"list" => package_managers.iter()
+			.for_each(|pm| pm.list(items.as_slice().into())
 				.match_owned(
 					|p| p.match_owned(
 						|p| {
 							let name = pm.name();
-							p.iter().for_each(|pkg| println!("{name}: {}", pkg.name));
+							p.iter().for_each(|p| println!("{name}: {p}"));
 						},
-						|e| {
-							let name = pm.name();
-							warn!("{name}: {e}");
-						}),
+						|e| warn!("{}: {e}", pm.name())),
 					|| (),
 				)),
+
 		v => err!("unknown verb '{v}'"),
 	}
 

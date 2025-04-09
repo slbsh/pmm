@@ -1,0 +1,16 @@
+[package]
+name = "cargo"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+stabby = { version = "36.2", git = "https://github.com/slbsh/stabby" }
+pmm-abi = { path = "../../pmm-abi" }
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1

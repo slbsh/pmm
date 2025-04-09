@@ -1,7 +1,8 @@
 name = "cargo"
-env."CARGO_TERM_COLOR" = "always"
+run-cond = "which cargo"
 
 [impl]
 add    = "cargo install ${items}"
 remove = "cargo uninstall ${items}"
 query  = "cargo info ${items}"
+list   = "cargo search ${items}"
