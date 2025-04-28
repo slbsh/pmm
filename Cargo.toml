@@ -1,0 +1,11 @@
+[package]
+name = "pmm2"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# risp = "0.7"
+# stak = "0.10"
+janetrs = { version = "0.8", features = ["nightly"] }
+# steel-core = { git = "https://github.com/mattwparas/steel", branch = "master" }
+colored = "3.0"
