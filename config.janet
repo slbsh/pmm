@@ -1,2 +1,3 @@
 { :frontend-dir "./frontends"
-  :world-path   "./world" }
+  :world-path   "./world" 
+  :priority ["cargo" "somethingelse"] }

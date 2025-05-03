@@ -1,111 +1,61 @@
-use janetrs::{env::DefOptions, Janet, JanetKeyword, JanetString, TaggedJanet};
+use janetrs::{Janet, TaggedJanet};
+use colored::Colorize;
 
 mod config;
 mod error;
 mod args;
 mod prelude;
+mod frontend;
+mod util;
 
+use util::JanetInto;
+
+// TODO: make absolute :)
 const DEFAULT_CONF_PATH: &str = "./config.janet";
 
-fn main() {
-	let args = args::Args::parse(std::env::args().skip(1));
+pub struct PmmExec {
+	rt:        janetrs::client::JanetClient,
+	args:      args::Args,
+	config:    config::Config,
+	frontends: frontend::Frontends,
+}
 
-	args.handle_base_flags();
+impl PmmExec {
+	fn init(args: args::Args) -> Self {
+		let mut rt = janetrs::client::JanetClient::init()
+			.unwrap_or_else(|e| err!("{e}"))
+			.load_env_default();
 
-	let mut rt = janetrs::client::JanetClient::init()
-		.unwrap_or_else(|e| crate::err!("{e}"))
-		.load_env_default();
+		prelude::append(&mut rt);
 
-	prelude::append(&mut rt);
+		// TODO: maybe have config set a var?
+		let config = config::Config::eval_from_file(&mut rt, 
+			&std::env::var("PMM_CONFIG")
+				.unwrap_or_else(|_| String::from(DEFAULT_CONF_PATH)));
 
-	let config = {
-		let filename = std::env::var("PMM_CONFIG")
-			.unwrap_or_else(|_| String::from(DEFAULT_CONF_PATH));
-
-		let file = std::fs::read_to_string(&filename)
-			.unwrap_or_else(|e| err!("{filename}: {e}"));
-
-		let config = match rt.run(file).map(|v| v.unwrap()) {
-			Err(e) => err!("{e}"),
-			Ok(TaggedJanet::Struct(m)) => m,
-			Ok(t) => err!("Expected `map`, got `{}`", t.kind()),
-		};
-
-		config::Config {
-			frontend_dir: config.get(JanetKeyword::new("frontend-dir"))
-				.unwrap_or_else(|| err!("config missing field `:frontend-dir`"))
-				.to_string(),
-
-			world_path: config.get(JanetKeyword::new("world-path"))
-				.unwrap_or_else(|| err!("config missing field `:world-path`"))
-				.to_string(),
-
-			env: config.get(JanetKeyword::new("env"))
-				.map_or_else(|| Default::default(), |v| 
-					match v.unwrap() {
-					TaggedJanet::Struct(s) => s.into_iter()
-						.map(|(k, v)| (k.to_string(), v.to_string()))
-						.collect(),
-					t => err!("Expected `map`, got `{}`", t.kind()),
-				}),
+		Self { 
+			frontends: frontend::Frontends::get_from_dir(&mut rt, &config.frontend_dir),
+			config, rt, args,
 		}
-	};
-
-	#[cfg(debug_assertions)]
-	println!("{:#?}", config);
-
-	let mut frontends = std::fs::read_dir(&config.frontend_dir)
-		.unwrap_or_else(|e| err!("'{}': {e}", config.frontend_dir))
-		.filter_map(|entry| {
-			let path = entry.unwrap_or_else(|e| err!("{e}")).path();
-			(!path.is_dir()).then_some(path)
-		})
-		.map(|path| {
-			let mut path = std::path::absolute(&path).unwrap();
-			path.set_extension("");
-			let ns = path.file_stem().unwrap().to_string_lossy();
-
-			rt.run(format!("(import @{} :as {ns})", path.to_str().unwrap()))
-				.unwrap_or_else(|e| err!("{e}"));
-
-			ns.to_string()
-		})
-		.collect::<Vec<_>>();
-
-	#[cfg(debug_assertions)]
-	println!("{:?}", frontends);
-
-	if frontends.is_empty() {
-		err!("No frontends found in `{}`", config.frontend_dir);
 	}
 
-	if args.verbs.is_empty() {
-		err!("No verbs provided"); // TODO: better error message
-	}
-
-	let janet_args = args.verbs.get(1..)
-		.unwrap_or_default()
-		.iter().copied()
-		.map(Janet::from)
-		.collect::<Vec<_>>();
-
-	let call_all_threaded = |rt: &mut janetrs::client::JanetClient, f: &mut Vec<String>, name: &str| {
-		rt.add_def(DefOptions::new("pmm-chan", 
-			rt.run(format!("(ev/thread-chan {})", f.len()))
+	fn call_all_threaded(&mut self, name: &str, args: impl AsRef<[Janet]>) -> Vec<(frontend::Frontend, Janet)> {
+		self.rt.add_def(janetrs::env::DefOptions::new("pmm-chan", 
+			self.rt.run(format!("(ev/thread-chan {})", self.frontends.len()))
 				.unwrap_or_else(|e| err!("{e}"))));
 
-		f.iter_mut().for_each(|ns| {
-			let mut f = match rt.run(format!("(fn [& x] (ev/spawn-thread (ev/give pmm-chan [\"{ns}\" (apply {ns}/{name} x)])))"))
-				.unwrap_or_else(|e| err!("{e}")).unwrap() {
+		self.frontends.iter().for_each(|ns| {
+			let mut f = match self.rt.run(format!("(fn [& x] (ev/spawn-thread (ev/give pmm-chan [\"{ns}\" (apply {ns}/{name} x)])))"))
+				.unwrap_or_else(|e| err!("{ns}: {e}")).unwrap() {
 				TaggedJanet::Function(f) => f,
-				t => err!("{ns}: expected `function`, got `{}`", t.kind()),
+				t => err!("{ns}/{name}: expected `function`, got `{}`", t.kind()),
 			};
 
-			f.call(&janet_args).unwrap_or_else(|e| err!("{e}"));
+			f.call(&args).unwrap_or_else(|e| err!("{ns}: {e}"));
 		});
 
 		// FIXME: 🤮
-		match rt.run(format!("(seq [_ :range [0 {}]] (ev/take pmm-chan))", f.len()))
+		match self.rt.run(format!("(seq [_ :range [0 {}]] (ev/take pmm-chan))", self.frontends.len()))
 			.unwrap_or_else(|e| err!("{e}"))
 			.unwrap() {
 			TaggedJanet::Array(a) => a.into_iter().map(|e| {
@@ -115,24 +65,69 @@ fn main() {
 			}).collect::<Vec<_>>(),
 			t => err!("Expected `array`, got `{}`", t.kind()),
 		}
-	};
+	}
 
-	match *args.verbs.first().unwrap() {
-		"list" => {
-			call_all_threaded(&mut rt, &mut frontends, "list")
-				.into_iter()
-				.for_each(|(name, v)| {
+	fn cmd(&mut self, act: Action) {
+		match act {
+			Action::Search(arg) => {
+				let mut res = self.call_all_threaded("search", &[Janet::wrap(&*arg)]);
+
+				// TODO: diff flag + document
+				match self.args.get("bottomup") {
+					true => res.sort_unstable_by_key(|(k, _)| self.config.priority.iter().rev()
+						.position(|p| p == k).unwrap_or(usize::MIN)),
+					false => res.sort_unstable_by_key(|(k, _)| self.config.priority.iter()
+						.position(|p| p == k).unwrap_or(usize::MAX)),
+				}
+
+				res.into_iter().for_each(|(name, v)| {
 					let a = match v.unwrap() {
 						TaggedJanet::Array(a) => a,
 						t => err!("{name}: expected `array`, got `{}`", t.kind()),
 					};
 
-					a.into_iter().for_each(|e| println!("{}: {}", name, e.to_string()))
+					a.into_iter().for_each(|e| {
+						let pkg: frontend::Package = e.janet_into();
+						// TODO: unique colours per frontend
+						println!("{}{}{}", name.cyan().bold(), "/".bold(), pkg)
+					})
 				})
-		},
-		"query" => {
-			println!("{:?}", call_all_threaded(&mut rt, &mut frontends, "query"));
-		},
-		_ => todo!(),
+			},
+			Action::Info(arg) => {
+				self.call_all_threaded("info", &[Janet::wrap(&*arg)])
+					.into_iter().for_each(|(name, o)| {
+						let p: frontend::PackageInfo = o.janet_into();
+						println!("Frontend:     {}\n{p}", name.cyan().bold())
+					});
+			},
+			_ => todo!(),
+		}
 	}
+}
+
+enum Action {
+	Search(String),   // Array<Package>
+	Info(String),     // PackageInfo
+	Add(Vec<String>), // Array<Package>
+	Del(Vec<String>), // Array<Package>
+}
+
+fn main() {
+	let (args, mut verbs) = args::Args::parse(std::env::args().skip(1));
+	args.handle_base_flags(); // TODO: maybe move into Args::parse
+
+	let mut pmm = PmmExec::init(args);
+
+	let action = match verbs.first().map(|s| s.as_str()) {
+		Some("search") => Action::Search(verbs[1..].join(" ")),
+
+		Some("info") if verbs.len() > 2 => err!("action `info` expected only one argument"),
+		Some("info") if verbs.len() < 2 => err!("action `info` expected an argument"),
+		Some("info") => Action::Info(std::mem::take(&mut verbs[1])),
+
+		Some(a) => err!("Unknown action `{a}`"),
+		None => err!("No verbs provided"), // TODO: better error message
+	};
+
+	pmm.cmd(action);
 }

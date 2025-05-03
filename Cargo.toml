@@ -4,8 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# risp = "0.7"
-# stak = "0.10"
-janetrs = { version = "0.8", features = ["nightly"] }
-# steel-core = { git = "https://github.com/mattwparas/steel", branch = "master" }
-colored = "3.0"
+janetrs = { version = "0.8", features = ["nightly", "inline-more"] }
+colored = "3.0" # prob replace with ansi escapes
+minreq = { version = "2.13", features = ["https"] }
+miniserde = "0.1"
+# ureq = { version = "3.0", default-features = false, features = ["_ring", "rustls"] }
+# reqwest = { version = "0.12", features = ["blocking"] } # prob replace with a handrolled impl, adds ~110 deps
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+# panic = "abort"
