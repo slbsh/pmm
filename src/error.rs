@@ -7,6 +7,7 @@ macro_rules! err {
 		#[cfg(debug_assertions)] 
 		panic!("{}", std::backtrace::Backtrace::force_capture());
 
+		#[cfg(not(debug_assertions))]
 		std::process::exit(1)
 	}};
 }

@@ -4,11 +4,11 @@ use janetrs::{Janet, JanetKeyword, JanetStruct};
 use colored::Colorize;
 use crate::util::JanetInto;
 
-pub type Frontend = String;
+pub type Backend = String;
 
-pub struct Frontends(Vec<Frontend>);
+pub struct Backends(Vec<Backend>);
 
-impl Frontends {
+impl Backends {
 	pub fn get_from_dir(rt: &mut janetrs::client::JanetClient, path: impl AsRef<std::path::Path>) -> Self {
 		let ns = std::fs::read_dir(&path)
 			.unwrap_or_else(|e| crate::err!("{}: {e}", path.as_ref().display()))
@@ -36,14 +36,15 @@ impl Frontends {
 	}
 }
 
-impl std::ops::Deref for Frontends {
-	type Target = Vec<Frontend>;
+impl std::ops::Deref for Backends {
+	type Target = Vec<Backend>;
 	fn deref(&self) -> &Self::Target { &self.0 }
 }
 
 pub struct Package {
 	pub name:       String,
 	pub version:    String,
+	pub alias:      Option<String>,
 	pub desc:       String,
 	pub authors:    Option<Vec<String>>,
 	pub url:        String,
@@ -58,9 +59,10 @@ impl JanetInto<Package> for Janet {
 				.unwrap_or_else(|| crate::err!("missing field `:name`")).janet_into(),
 			version: j.get(JanetKeyword::from("version"))
 				.unwrap_or_else(|| crate::err!("missing field `:version`")).janet_into(),
+			alias:   None, // TODO: alias???
 			desc:    j.get(JanetKeyword::from("description"))
 				.unwrap_or_else(|| crate::err!("missing field `:description`")).janet_into(),
-			authors: j.get(JanetKeyword::from("author")).and_then(|a| a.janet_into()),
+			authors: j.get(JanetKeyword::from("authors")).and_then(|a| a.janet_into()),
 			url:     j.get(JanetKeyword::from("url"))
 				.unwrap_or_else(|| crate::err!("missing field `:url`")).janet_into(),
 		}
@@ -69,8 +71,9 @@ impl JanetInto<Package> for Janet {
 
 impl Display for Package {
 	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-		write!(f, "{} {}\n{}", 
+		write!(f, "{} {}{}\n{}", 
 			self.name.bold(), 
+			self.alias.as_ref().map_or(String::new(), |a| format!("{} {} ", "as".bold().cyan(), a.bold())),
 			self.version.to_string().green().bold(),
 			self.desc.trim(),
 		)
@@ -129,12 +132,13 @@ impl Display for PackageInfo {
 			const TB: u64 = 1000 * GB;
 			const PB: u64 = 1000 * TB;
 			match n {
-				0 ..=KB => format!("{}b", n),
-				KB..=MB => format!("{:.2}kb", n as f64 / KB as f64),
-				MB..=GB => format!("{:.2}Mb", n as f64 / MB as f64),
-				GB..=TB => format!("{:.2}Gb", n as f64 / GB as f64),
-				TB..=PB => format!("{:.2}Tb", n as f64 / TB as f64),
-				PB..    => format!("{:.2}Pb", n as f64 / PB as f64),
+				0 ..KB => format!("{}b", n),
+				KB..MB => format!("{:.2}kb", n as f64 / KB as f64),
+				MB..GB => format!("{:.2}Mb", n as f64 / MB as f64),
+				GB..TB => format!("{:.2}Gb", n as f64 / GB as f64),
+				TB..PB => format!("{:.2}Tb", n as f64 / TB as f64),
+				PB..   => format!("{:.2}Pb", n as f64 / PB as f64), 
+				// 0 way any package reaches beyond :L
 			}
 		};
 

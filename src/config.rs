@@ -3,7 +3,7 @@ use janetrs::{JanetKeyword, TaggedJanet};
 
 #[derive(Debug)]
 pub struct Config {
-	pub frontend_dir: String,
+	pub backend_dir: String,
 	pub world_path:   String,
 	pub env:          HashMap<String, String>,
 	pub priority:     Vec<String>,
@@ -21,8 +21,8 @@ impl Config {
 		};
 
 		Self {
-			frontend_dir: config.get(JanetKeyword::new("frontend-dir"))
-				.unwrap_or_else(|| crate::err!("{path}: missing field `:frontend-dir`"))
+			backend_dir: config.get(JanetKeyword::new("backend-dir"))
+				.unwrap_or_else(|| crate::err!("{path}: missing field `:backend-dir`"))
 				.to_string(),
 
 			world_path: config.get(JanetKeyword::new("world-path"))

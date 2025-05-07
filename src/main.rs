@@ -1,3 +1,5 @@
+use std::cell::LazyCell;
+
 use janetrs::{Janet, TaggedJanet};
 use colored::Colorize;
 
@@ -5,9 +7,11 @@ mod config;
 mod error;
 mod args;
 mod prelude;
-mod frontend;
+mod backend;
+mod world;
 mod util;
 
+use world::World;
 use util::JanetInto;
 
 // TODO: make absolute :)
@@ -17,7 +21,8 @@ pub struct PmmExec {
 	rt:        janetrs::client::JanetClient,
 	args:      args::Args,
 	config:    config::Config,
-	frontends: frontend::Frontends,
+	frontends: backend::Backends,
+	world:     LazyCell<World, Box<dyn FnOnce() -> World>>, // fucking closures
 }
 
 impl PmmExec {
@@ -33,13 +38,15 @@ impl PmmExec {
 			&std::env::var("PMM_CONFIG")
 				.unwrap_or_else(|_| String::from(DEFAULT_CONF_PATH)));
 
+		let world_path = config.world_path.clone();
 		Self { 
-			frontends: frontend::Frontends::get_from_dir(&mut rt, &config.frontend_dir),
+			frontends: backend::Backends::get_from_dir(&mut rt, &config.backend_dir),
+			world:     LazyCell::new(Box::new(move || World::new(&world_path))),
 			config, rt, args,
 		}
 	}
 
-	fn call_all_threaded(&mut self, name: &str, args: impl AsRef<[Janet]>) -> Vec<(frontend::Frontend, Janet)> {
+	fn call_all_threaded(&mut self, name: &str, args: impl AsRef<[Janet]>) -> Vec<(backend::Backend, Janet)> {
 		self.rt.add_def(janetrs::env::DefOptions::new("pmm-chan", 
 			self.rt.run(format!("(ev/thread-chan {})", self.frontends.len()))
 				.unwrap_or_else(|e| err!("{e}"))));
@@ -67,18 +74,21 @@ impl PmmExec {
 		}
 	}
 
+	fn sort_by_priority(&self, v: &mut Vec<(backend::Backend, Janet)>) {
+		// TODO: diff flag + document
+		match self.args.get("bottomup") {
+			true => v.sort_unstable_by_key(|(k, _)| self.config.priority.iter().rev()
+				.position(|p| p == k).unwrap_or(usize::MIN)),
+			false => v.sort_unstable_by_key(|(k, _)| self.config.priority.iter()
+				.position(|p| p == k).unwrap_or(usize::MAX)),
+		}
+	}
+
 	fn cmd(&mut self, act: Action) {
 		match act {
 			Action::Search(arg) => {
 				let mut res = self.call_all_threaded("search", &[Janet::wrap(&*arg)]);
-
-				// TODO: diff flag + document
-				match self.args.get("bottomup") {
-					true => res.sort_unstable_by_key(|(k, _)| self.config.priority.iter().rev()
-						.position(|p| p == k).unwrap_or(usize::MIN)),
-					false => res.sort_unstable_by_key(|(k, _)| self.config.priority.iter()
-						.position(|p| p == k).unwrap_or(usize::MAX)),
-				}
+				self.sort_by_priority(&mut res);
 
 				res.into_iter().for_each(|(name, v)| {
 					let a = match v.unwrap() {
@@ -87,8 +97,8 @@ impl PmmExec {
 					};
 
 					a.into_iter().for_each(|e| {
-						let pkg: frontend::Package = e.janet_into();
-						// TODO: unique colours per frontend
+						let pkg: backend::Package = e.janet_into();
+						// TODO: unique colours per backend
 						println!("{}{}{}", name.cyan().bold(), "/".bold(), pkg)
 					})
 				})
@@ -96,8 +106,8 @@ impl PmmExec {
 			Action::Info(arg) => {
 				self.call_all_threaded("info", &[Janet::wrap(&*arg)])
 					.into_iter().for_each(|(name, o)| {
-						let p: frontend::PackageInfo = o.janet_into();
-						println!("Frontend:     {}\n{p}", name.cyan().bold())
+						let p: backend::PackageInfo = o.janet_into();
+						println!("Backend:      {}\n{p}", name.cyan().bold())
 					});
 			},
 			_ => todo!(),
