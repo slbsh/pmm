@@ -1,4 +1,5 @@
-use janetrs::{Janet, JanetArray, JanetKeyword, JanetStruct};
+use janetrs::{env::DefOptions, Janet, JanetArray, JanetFunction, JanetKeyword, JanetStruct};
+use crate::keyword;
 
 #[janetrs::janet_fn(arity(range(1)))]
 fn rsdbg(args: &mut [Janet]) -> Janet {
@@ -19,11 +20,11 @@ fn exec(args: &mut [Janet]) -> Janet {
 	let stderr = str::from_utf8(&cmd.stderr)
 		.unwrap_or_else(|e| crate::err!("{e}"));
 
-	Janet::structs(JanetStruct::builder(3)
-		.put(JanetKeyword::new("status"), cmd.status.code().unwrap_or_default())
-		.put(JanetKeyword::new("stdout"), stdout)
-		.put(JanetKeyword::new("stderr"), stderr)
-		.finalize())
+	Janet::from(janetrs::structs! {
+		keyword![status] => cmd.status.code().unwrap_or_default(),
+		keyword![stdout] => stdout,
+		keyword![stderr] => stderr,
+	})
 }
 
 #[janetrs::janet_fn(arity(range(1)))]
@@ -79,4 +80,11 @@ pub fn append(rt: &mut janetrs::client::JanetClient) {
 	rt.add_c_fn(CFunOptions::new(c"exec", exec_c));
 	rt.add_c_fn(CFunOptions::new(c"get-req", get_req_c));
 	rt.add_c_fn(CFunOptions::new(c"json->janet", json_to_janet_c));
+
+	rt.run("(defn ffi-func [ctx sym & args]
+				  (let [ptr (ffi/lookup ctx sym)
+						  sig (apply ffi/signature :default args)]
+					  (fn [& args] (apply ffi/call ptr sig args))))").unwrap();
+
+
 }

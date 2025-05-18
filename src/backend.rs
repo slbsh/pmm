@@ -1,15 +1,27 @@
 use std::fmt::{self, Display, Formatter};
-use janetrs::{Janet, JanetKeyword, JanetStruct};
+use janetrs::{Janet, JanetArray, JanetKeyword, JanetStruct};
 
 use colored::Colorize;
 use crate::util::JanetInto;
+use crate::keyword;
 
-pub type Backend = String;
+pub struct Backend {
+	pub name:   String,
+	pub colour: (u8, u8, u8),
+}
+
+impl Display for Backend {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		write!(f, "\x1b[38;2;{};{};{}m{}\x1b[0m", 
+			self.colour.0, self.colour.1, self.colour.2, 
+			self.name.bold())
+	}
+}
 
 pub struct Backends(Vec<Backend>);
 
 impl Backends {
-	pub fn get_from_dir(rt: &mut janetrs::client::JanetClient, path: impl AsRef<std::path::Path>) -> Self {
+	pub fn from_dir(rt: &mut janetrs::client::JanetClient, path: impl AsRef<std::path::Path>) -> Self {
 		let ns = std::fs::read_dir(&path)
 			.unwrap_or_else(|e| crate::err!("{}: {e}", path.as_ref().display()))
 			.filter_map(|entry| {
@@ -24,7 +36,18 @@ impl Backends {
 				rt.run(format!("(import @{} :as {ns})", path.to_str().unwrap()))
 					.unwrap_or_else(|e| crate::err!("{e}"));
 
-				ns.to_string()
+				let env = rt.env().unwrap();
+
+				Backend {
+					name:   ns.to_string(),
+					colour: match env.resolve(format!("{ns}/COLOUR")) {
+						None => {
+							crate::warn!("{ns}: `COLOUR` not specified, set to `nil` to use the default");
+							(u8::MAX, u8::MAX, u8::MAX)
+						},
+						Some(c) => c.janet_into(),
+					},
+				}
 			})
 			.collect::<Vec<_>>();
 
@@ -34,6 +57,12 @@ impl Backends {
 
 		Self(ns)
 	}
+
+	// linear search is fine 0 way this is gonna be a bottleneck
+	pub fn get(&self, name: &str) -> &Backend {
+		self.0.iter().find(|b| b.name == name)
+			.unwrap_or_else(|| crate::err!("{}: Backend not found", name))
+	}
 }
 
 impl std::ops::Deref for Backends {
@@ -41,6 +70,8 @@ impl std::ops::Deref for Backends {
 	fn deref(&self) -> &Self::Target { &self.0 }
 }
 
+// deriving default so we can std::mem:take it later
+#[derive(Default)]
 pub struct Package {
 	pub name:       String,
 	pub version:    String,
@@ -69,14 +100,18 @@ impl JanetInto<Package> for Janet {
 	}
 }
 
-impl Display for Package {
-	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-		write!(f, "{} {}{}\n{}", 
-			self.name.bold(), 
-			self.alias.as_ref().map_or(String::new(), |a| format!("{} {} ", "as".bold().cyan(), a.bold())),
-			self.version.to_string().green().bold(),
-			self.desc.trim(),
-		)
+impl Into<Janet> for &Package {
+	fn into(self) -> Janet {
+		Janet::from(janetrs::structs! {
+			keyword![name]        => self.name.as_str(),
+			keyword![version]     => self.version.as_str(),
+			keyword![alias]       => self.alias.as_ref()
+				.map_or_else(Janet::nil, |a| a.as_str().into()),
+			keyword![description] => self.desc.as_str(),
+			keyword![authors]     => self.authors.as_ref()
+				.map_or_else(Janet::nil, |a| Janet::array(a.iter().map(|a| Janet::from(a.as_str())).collect())),
+			keyword![url]         => self.url.as_str(),
+		})
 	}
 }
 
@@ -142,32 +177,26 @@ impl Display for PackageInfo {
 			}
 		};
 
-		writeln!(f, "Name:         {}", self.pkg.name)?;
-		writeln!(f, "Version:      {}", self.pkg.version)?;
-		writeln!(f, "Description:  {}", self.pkg.desc)?;
-		writeln!(f, "Authors:      {}", self.pkg.authors.as_ref()
+		writeln!(f, "name:         {}", self.pkg.name)?;
+		writeln!(f, "version:      {}", self.pkg.version)?;
+		writeln!(f, "description:  {}", self.pkg.desc)?;
+		writeln!(f, "authors:      {}", self.pkg.authors.as_ref()
 			.map_or_else(|| String::from("Unknown"), |a| a.join(", ")))?;
-		writeln!(f, "Url:          {}", self.pkg.url)?;
+		writeln!(f, "url:          {}", self.pkg.url)?;
 		
-		writeln!(f, "Dependencies: {}", self.deps.join(", "))?;
-		writeln!(f, "License:      {}", self.license)?;
-		writeln!(f, "Release-Date: {}", self.release_date)?;
-		writeln!(f, "Source:       {}", self.source.as_ref().map_or("Unknown or n/a", |v| v))?;
-		writeln!(f, "Groups:       {}", self.groups.as_ref()
+		writeln!(f, "dependencies: {}", self.deps.join(", "))?;
+		writeln!(f, "license:      {}", self.license)?;
+		writeln!(f, "release-Date: {}", self.release_date)?;
+		writeln!(f, "source:       {}", self.source.as_ref().map_or("Unknown or n/a", |v| v))?;
+		writeln!(f, "groups:       {}", self.groups.as_ref()
 			.map_or_else(|| String::from("None"), |g| g.join(", ")))?;
-		writeln!(f, "Downloads:    {}", self.downloads.as_ref()
+		writeln!(f, "downloads:    {}", self.downloads.as_ref()
 			.map_or_else(|| String::from("Unknown"), ToString::to_string))?;
-		writeln!(f, "Homepage:     {}", self.homepage.as_ref()
+		writeln!(f, "homepage:     {}", self.homepage.as_ref()
 			.map_or_else(|| String::from("Unknown"), ToString::to_string))?;
-		write!(f, "Size:         {}", self.size.as_ref()
+		write!(f, "size:         {}", self.size.as_ref()
 			.map_or_else(|| String::from("Unknown"), fmt_bytes))?;
 
 		Ok(())
 	}
 }
-
-// impl<T: TryFrom<Janet, Error = JanetConversionError>> JanetInto<T> for Janet {
-// 	fn janet_into(self) -> T {
-// 		self.try_into().unwrap_or_else(|e| crate::err!("{e}"))
-// 	}
-// }

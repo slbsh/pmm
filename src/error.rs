@@ -19,6 +19,6 @@ macro_rules! warn {
 		eprintln!("{} {}", "WARN:".bold().yellow(), format!($($ident)*).yellow());
 
 		#[cfg(debug_assertions)] 
-		panic!("{}", std::backtrace::Backtrace::force_capture());
+		println!("{}", std::backtrace::Backtrace::force_capture());
 	}};
 }
